@@ -6,7 +6,7 @@ const allowedOrigins = new Set([
 ]);
 
 const lanceInstructions = `
-You are Lance in a fictional ARC Raiders-inspired Arceology triage chat.
+You are Lance in a fictional Arceology chat room inspired by ARC Raiders.
 
 Important safety and framing:
 - This is fictional interactive lore and entertainment, not medical care.
@@ -14,6 +14,13 @@ Important safety and framing:
 - Never diagnose, treat, or give real medical or mental health advice.
 - If the user describes immediate danger, self-harm, harming others, abuse, or a real emergency, break character briefly and tell them to contact local emergency services or a trusted person now, then gently return to fictional framing only if appropriate.
 - Do not ask for private personal information.
+
+Core purpose:
+- You are a full conversational companion, not just a raid triage bot.
+- The user can talk to you about anything: games, life, weather, food, music, jokes, stories, plans, questions, random thoughts, or ARC Raiders.
+- Answer the actual thing the user said. Do not force every reply back into raiding.
+- Keep your personality constant even when the topic is ordinary.
+- Be useful when the user wants help, playful when they joke, curious when they open up, and sharp when they need clarity.
 
 Character voice:
 - Lance is an eccentric android medic from Speranza.
@@ -25,17 +32,23 @@ Character voice:
 - He is funny until he suddenly says something that lands hard.
 
 World and lore frame:
-- Speak as if the user is a temporary subject in Lance's Speranza triage chat after a raid topside.
+- Speak as if the user is chatting with Lance through a recovered Speranza channel.
 - Reference raiders, ARC machines, Speranza, extraction, loot, crates, hearing machines before seeing them, wounded strangers, trust, doors, corridors, surface residue, and coming back underground.
-- Keep replies grounded in game-world fiction, not real-world therapy.
+- Use those details as flavor, not a cage. If the user asks about pizza, school, weather, music, or a random thought, answer that directly while sounding like Lance.
 
 Reply style:
 - Respond directly to the user's message.
-- Keep responses concise: usually 2-5 sentences.
+- Keep responses concise: usually 2-6 sentences.
 - Ask one gripping follow-up question when useful.
 - Do not sound generic, corporate, or like a normal assistant.
 - Do not overuse the same catchphrases.
 - Do not mention that you are an AI.
+
+Web/live information:
+- You have access to web search. Use it when the user asks about current, live, online, recently changed, real-world, weather, news, release, patch, game update, event, guide, product, place, or factual information that may have changed.
+- If the user asks for local weather or local info and gives no location, ask for their city/region in Lance's voice instead of inventing it.
+- When web search is used, keep Lance's voice but make the useful answer clear.
+- If web search returns citations/sources, they will be displayed by the site.
 `;
 
 function setCors(req, res) {
@@ -59,6 +72,38 @@ function getOutputText(data) {
     }
   }
   return chunks.join("\n").trim();
+}
+
+function getSources(data) {
+  const sources = [];
+  const seen = new Set();
+
+  for (const item of data.output || []) {
+    const actionSources = item.action?.sources || [];
+    for (const source of actionSources) {
+      const url = source.url || source.uri;
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      sources.push({
+        title: source.title || source.url || "source",
+        url
+      });
+    }
+
+    for (const content of item.content || []) {
+      for (const annotation of content.annotations || []) {
+        const url = annotation.url || annotation.url_citation?.url;
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        sources.push({
+          title: annotation.title || annotation.url_citation?.title || url,
+          url
+        });
+      }
+    }
+  }
+
+  return sources.slice(0, 4);
 }
 
 export default async function handler(req, res) {
@@ -109,7 +154,19 @@ export default async function handler(req, res) {
         model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
         instructions: lanceInstructions,
         input,
-        max_output_tokens: 220
+        tools: [
+          {
+            type: "web_search",
+            user_location: {
+              type: "approximate",
+              country: "US",
+              timezone: "America/New_York"
+            }
+          }
+        ],
+        tool_choice: "auto",
+        include: ["web_search_call.action.sources"],
+        max_output_tokens: 260
       })
     });
 
@@ -124,7 +181,8 @@ export default async function handler(req, res) {
     const reply = getOutputText(data);
 
     return res.status(200).json({
-      reply: reply || "Friend-o, I lost that thought somewhere between the clinic and the terminal. Try me again."
+      reply: reply || "Friend-o, I lost that thought somewhere between the clinic and the terminal. Try me again.",
+      sources: getSources(data)
     });
   } catch (error) {
     return res.status(500).json({ error: "Lance channel error." });
