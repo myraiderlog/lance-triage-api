@@ -144,33 +144,59 @@ export default async function handler(req, res) {
       "Lance:"
     ].join("\n");
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const useWebSearch = process.env.ENABLE_WEB_SEARCH === "true";
+    const requestBody = {
+      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+      instructions: lanceInstructions,
+      input,
+      max_output_tokens: 320
+    };
+
+    if (useWebSearch) {
+      requestBody.tools = [
+        {
+          type: "web_search",
+          user_location: {
+            type: "approximate",
+            country: "US",
+            timezone: "America/New_York"
+          }
+        }
+      ];
+      requestBody.tool_choice = "auto";
+      requestBody.include = ["web_search_call.action.sources"];
+    }
+
+    let response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
       },
-      body: JSON.stringify({
+      body: JSON.stringify(requestBody)
+    });
+
+    let data = await response.json();
+
+    if (!response.ok && useWebSearch) {
+      const fallbackBody = {
         model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
         instructions: lanceInstructions,
         input,
-        tools: [
-          {
-            type: "web_search",
-            user_location: {
-              type: "approximate",
-              country: "US",
-              timezone: "America/New_York"
-            }
-          }
-        ],
-        tool_choice: "auto",
-        include: ["web_search_call.action.sources"],
-        max_output_tokens: 260
-      })
-    });
+        max_output_tokens: 320
+      };
 
-    const data = await response.json();
+      response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+        },
+        body: JSON.stringify(fallbackBody)
+      });
+
+      data = await response.json();
+    }
 
     if (!response.ok) {
       return res.status(response.status).json({
